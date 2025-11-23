@@ -12,8 +12,23 @@ public class ConfigPanel extends JPanel {
     private JTextArea terminal;
     private JLabel pingLabel;
 
+    // Lambda hook para iniciar simulação
+    private Runnable initSimulation;
+
+    // Permite que outras classes definam a lambda
+    public void setInitSimulation(Runnable initSimulation) {
+        this.initSimulation = initSimulation;
+    }
+
+    // Invoca a lambda (no EDT)
+    public void invokeInitSimulation() {
+        if (initSimulation != null) {
+            SwingUtilities.invokeLater(initSimulation);
+        }
+    }
+
     // --- ADICIONE ISTO ---
-    private Network network; // Referência à classe de rede
+    public Network network; // Referência à classe de rede
     // ---------------------
 
     public ConfigPanel() {
@@ -121,6 +136,8 @@ public class ConfigPanel extends JPanel {
                 network.connect(ip, port);
                 pingLabel.setText("Status: Tentando Conectar...");
             }
+
+            invokeInitSimulation();
         });
     }
 

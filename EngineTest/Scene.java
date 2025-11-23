@@ -14,6 +14,8 @@ public class Scene {
     float deltaTime;
     float iterations;
 
+    Network network; // Referência à classe de rede
+
     // Acceleration
     // F = mA
     // => A = F * 1/m
@@ -117,6 +119,13 @@ public class Scene {
             b.force = new Vector2(0, 0);
             b.torque = 0;
         }
+
+        String estadoCena = "SCENE:";
+        for (RigidBody b : bodies) {
+            estadoCena += "BODY:" + b.position.x + ":" + b.position.y + ";";
+        }
+
+        network.sendMessage(estadoCena);
 
     }
 

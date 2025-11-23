@@ -131,7 +131,30 @@ public class main extends JPanel {
         configFrame.setLocationRelativeTo(null);
         configFrame.setVisible(true);
 
+        panel.setInitSimulation(() -> {
+            // Abre a janela de simulação com a rede configurada
+            openSimulationWindow(panel.network);
+        });
+
         // Dica: Você pode fazer com que o jogo só inicie depois de configurar aqui
+    }
+
+    public static void openSimulationWindow(Network network) {
+        JFrame frame = new JFrame("Java Physics Engine");
+        main simulation = new main();
+        frame.add(simulation);
+        frame.pack();
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setLocationRelativeTo(null);
+        frame.setVisible(true);
+
+        simulation.scene.network = network; // Passa a referência da rede para a cena
+
+        Timer timer = new Timer(16, e -> {
+            simulation.scene.step();
+            simulation.repaint();
+        });
+        timer.start();
     }
 
     // --- ENTRY POINT ---
@@ -142,21 +165,6 @@ public class main extends JPanel {
         SwingUtilities.invokeLater(() -> {
             openConfigWindow();
 
-            // Abre o Jogo Principal (o código que você já tinha)
-            JFrame frame = new JFrame("Java Physics Engine");
-            main simulation = new main();
-            frame.add(simulation);
-            frame.pack();
-            frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-            // frame.setLocationRelativeTo(null); // Comentado para não ficar em cima do
-            // config
-            frame.setVisible(true);
-
-            Timer timer = new Timer(16, e -> {
-                simulation.scene.step();
-                simulation.repaint();
-            });
-            timer.start();
         });
     }
 }
