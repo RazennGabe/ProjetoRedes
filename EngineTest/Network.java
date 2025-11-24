@@ -27,16 +27,21 @@ public class Network {
                 serverSocket = new ServerSocket(port);
 
                 uiCallback.log(">> [Rede] Aguardando cliente...");
-                socket = serverSocket.accept(); // TRAVA AQUI até alguém conectar
+                socket = serverSocket.accept(); // bloqueia até alguém conectar
 
                 setupStreams();
                 uiCallback.log(">> [Rede] Cliente conectado: " + socket.getInetAddress());
+
+                // Notify UI connected
+                SwingUtilities.invokeLater(() -> uiCallback.onConnected());
 
                 // Inicia loop de escuta
                 startListening();
 
             } catch (IOException e) {
                 uiCallback.log(">> [Erro] Servidor: " + e.getMessage());
+                close();
+                SwingUtilities.invokeLater(() -> uiCallback.onConnectionFailed(e.getMessage()));
             }
         }).start();
     }
@@ -46,18 +51,57 @@ public class Network {
         new Thread(() -> {
             try {
                 uiCallback.log(">> [Rede] Conectando a " + ip + ":" + port + "...");
-                socket = new Socket(ip, port);
+                // use explicit Socket and connect with timeout to fail fast
+                socket = new Socket();
+                socket.connect(new InetSocketAddress(ip, port), 3000); // 3s timeout
 
                 setupStreams();
                 uiCallback.log(">> [Rede] Conectado ao Servidor!");
+
+                // Notify UI connected
+                SwingUtilities.invokeLater(() -> uiCallback.onConnected());
 
                 // Inicia loop de escuta
                 startListening();
 
             } catch (IOException e) {
                 uiCallback.log(">> [Erro] Falha ao conectar: " + e.getMessage());
+                close();
+                SwingUtilities.invokeLater(() -> uiCallback.onConnectionFailed(e.getMessage()));
             }
         }).start();
+    }
+
+    private void startListening() {
+        listenerThread = new Thread(() -> {
+            try {
+                String inputLine;
+                while ((inputLine = in.readLine()) != null) {
+                    final String msg = inputLine;
+                    // Atualiza UI na Thread do Swing
+                    SwingUtilities.invokeLater(() -> {
+                        uiCallback.log(">> [Recebido]: " + msg);
+
+                        // Exemplo: Se receber "PING", responde "PONG"
+                        if (msg.equals("PING"))
+                            sendMessage("PONG");
+                    });
+                }
+
+                // Remote side closed connection (EOF)
+                SwingUtilities.invokeLater(() -> {
+                    uiCallback.log(">> [Rede] Conexão encerrada pelo par remoto.");
+                    uiCallback.onConnectionClosed();
+                });
+
+            } catch (IOException e) {
+                SwingUtilities.invokeLater(() -> {
+                    uiCallback.log(">> [Rede] Conexão encerrada.");
+                    uiCallback.onConnectionClosed();
+                });
+            }
+        });
+        listenerThread.start();
     }
 
     // Configura entrada e saída de dados
@@ -76,26 +120,23 @@ public class Network {
         }
     }
 
-    // Loop que fica ouvindo mensagens chegando
-    private void startListening() {
-        listenerThread = new Thread(() -> {
-            try {
-                String inputLine;
-                while ((inputLine = in.readLine()) != null) {
-                    final String msg = inputLine;
-                    // Atualiza UI na Thread do Swing
-                    SwingUtilities.invokeLater(() -> {
-                        uiCallback.log(">> [Recebido]: " + msg);
-
-                        // Exemplo: Se receber "PING", responde "PONG"
-                        if (msg.equals("PING"))
-                            sendMessage("PONG");
-                    });
-                }
-            } catch (IOException e) {
-                uiCallback.log(">> [Rede] Conexão encerrada.");
+    // Fecha conexões e threads com segurança
+    public synchronized void close() {
+        try {
+            if (listenerThread != null && listenerThread.isAlive()) {
+                listenerThread.interrupt();
             }
-        });
-        listenerThread.start();
+            if (in != null) in.close();
+        } catch (IOException ignored) {}
+        if (out != null) out.close();
+        try {
+            if (socket != null && !socket.isClosed()) socket.close();
+        } catch (IOException ignored) {}
+        try {
+            if (serverSocket != null && !serverSocket.isClosed()) serverSocket.close();
+        } catch (IOException ignored) {}
+
+        // Notify UI that connection is closed (safe to call on EDT)
+        SwingUtilities.invokeLater(() -> uiCallback.onConnectionClosed());
     }
 }
