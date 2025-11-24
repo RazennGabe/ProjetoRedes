@@ -14,7 +14,8 @@ public class Scene {
     float deltaTime;
     float iterations;
 
-    Network network; // Referência à classe de rede
+    // Contador Global de IDs (Só o Servidor usa isso)
+    private int nextIdCounter = 0;
 
     // Acceleration
     // F = mA
@@ -27,6 +28,21 @@ public class Scene {
     // Semi-Implicit (Symplectic) Euler
     // v += (1/m * F) * dt
     // x += v * dt
+
+    // Método para encontrar um corpo pelo ID (O(n) - simples para agora)
+    public RigidBody findBodyById(int id) {
+        for (RigidBody b : bodies) {
+            if (b.id == id)
+                return b;
+        }
+        return null;
+    }
+
+    // Método para registrar um corpo novo (Servidor chama isso)
+    public void addBodyServer(RigidBody b) {
+        b.id = nextIdCounter++; // Atribui ID único
+        bodies.add(b);
+    }
 
     void IntegrateForces(RigidBody b, double dt) {
         if (b.invMass == 0.0)
@@ -124,8 +140,6 @@ public class Scene {
         for (RigidBody b : bodies) {
             estadoCena += "BODY:" + b.position.x + ":" + b.position.y + ";";
         }
-
-        network.sendMessage(estadoCena);
 
     }
 

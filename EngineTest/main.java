@@ -12,6 +12,8 @@ public class main extends JPanel {
     private static final int HEIGHT = 600;
     private static final double SCALE = 40.0; // 40 pixels = 1 metro
 
+    Network network;
+
     public main() {
         // 1. Configuração Inicial da Cena
         scene = new Scene();
@@ -33,14 +35,28 @@ public class main extends JPanel {
                 double worldX = e.getX() / SCALE;
                 double worldY = (HEIGHT - e.getY()) / SCALE;
 
-                // --- CONTROLE DE BOTÕES ---
+                // Verifica se estamos conectados
+                if (network == null) {
+                    // Modo Offline (Teste local)
+                    if (SwingUtilities.isLeftMouseButton(e)) createRandomPoly(scene, worldX, worldY);
+                    else createCircle(scene, worldX, worldY, 0.6);
+                    return;
+                }
 
-                if (SwingUtilities.isLeftMouseButton(e)) {
-                    // Botão Esquerdo (Left) -> Polígono Aleatório
-                    createRandomPoly(scene, worldX, worldY);
-                } else if (SwingUtilities.isRightMouseButton(e)) {
-                    // Botão Direito (Right) -> Círculo
-                    createCircle(scene, worldX, worldY, 0.6); // Raio fixo ou aleatório
+                // --- LÓGICA DE REDE ---
+                
+                // Define o tipo baseado no botão (Esq = POLY/BOX, Dir = CIRCLE)
+                String type = SwingUtilities.isRightMouseButton(e) ? "CIRCLE" : "POLY";
+                
+                // Cria o comando de Input
+                NetworkCommand.InputCommand inputCmd = new NetworkCommand.InputCommand(type, worldX, worldY);
+
+                if (network.isServer) {
+                    // Se sou SERVIDOR: Executo o comando imediatamente (Autoridade)
+                    inputCmd.execute(scene, true, network);
+                } else {
+                    // Se sou CLIENTE: Envio o pedido para o servidor via TCP
+                    network.send(inputCmd);
                 }
             }
         });
@@ -148,10 +164,27 @@ public class main extends JPanel {
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
 
-        simulation.scene.network = network; // Passa a referência da rede para a cena
+        simulation.network = network;
 
         Timer timer = new Timer(16, e -> {
-            simulation.scene.step();
+            if (network != null) {
+
+                network.processCommands(simulation.scene);
+
+                if (network.isServer) {
+                    simulation.scene.step();
+
+                    for (RigidBody b : simulation.scene.bodies) {
+                        if (b.invMass != 0 && b.id != -1) {
+                            NetworkCommand sync = new NetworkCommand.SyncCommand(
+                                    b.id, b.position.x, b.position.y, b.angle);
+                            network.broadcast(sync);
+                        }
+                    }
+                }
+
+            }
+
             simulation.repaint();
         });
         timer.start();
