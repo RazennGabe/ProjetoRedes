@@ -1,6 +1,7 @@
 package EngineTest;
 
 class RigidBody {
+    public int id = -1;
     Shape shape;
 
     // Linear Components
