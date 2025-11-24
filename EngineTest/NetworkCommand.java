@@ -40,40 +40,64 @@ public abstract class NetworkCommand {
     // ==========================================
     public static class SpawnCommand extends NetworkCommand {
         public int id;
-        public String shapeType; // "CIRCLE" or "BOX"
+        public String shapeType;
         public double x, y, size;
+        public Vector2[] vertices; // NOVO: Guarda os vértices se for POLY
 
-        // Constructor for creating internally
-        public SpawnCommand(int id, String shapeType, double x, double y, double size) {
+        // Construtor servidor (geração interna)
+        public SpawnCommand(int id, String shapeType, double x, double y, double size, Vector2[] vertices) {
             super(Type.SPAWN);
             this.id = id;
             this.shapeType = shapeType;
             this.x = x;
             this.y = y;
             this.size = size;
+            this.vertices = vertices;
         }
 
-        // Constructor for parsing from network
+        // Construtor cliente (parse da string)
         public SpawnCommand(String[] p) {
             super(Type.SPAWN);
             this.id = Integer.parseInt(p[1]);
             this.shapeType = p[2];
-            this.x = Double.parseDouble(p[3]);
-            this.y = Double.parseDouble(p[4]);
-            this.size = Double.parseDouble(p[5]);
+            this.x = Double.parseDouble(p[3].replace(",", "."));
+            this.y = Double.parseDouble(p[4].replace(",", "."));
+            this.size = Double.parseDouble(p[5].replace(",", "."));
+
+            // NOVO: Se for POLY, lemos os vértices extras
+            if (shapeType.equals("POLY")) {
+                int vCount = Integer.parseInt(p[6]);
+                this.vertices = new Vector2[vCount];
+                int index = 7; // Começa a ler depois do contador
+                for (int i = 0; i < vCount; i++) {
+                    double vx = Double.parseDouble(p[index++].replace(",", "."));
+                    double vy = Double.parseDouble(p[index++].replace(",", "."));
+                    this.vertices[i] = new Vector2(vx, vy);
+                }
+            }
         }
 
         @Override
         public String serialize() {
-            return String.format("SPAWN:%d:%s:%.2f:%.2f:%.2f", id, shapeType, x, y, size);
+            // Base: SPAWN:ID:TYPE:X:Y:SIZE
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format(java.util.Locale.US, "SPAWN:%d:%s:%.2f:%.2f:%.2f", id, shapeType, x, y, size));
+
+            // Extensão: :COUNT:VX:VY:VX:VY...
+            if (shapeType.equals("POLY") && vertices != null) {
+                sb.append(":").append(vertices.length);
+                for (Vector2 v : vertices) {
+                    sb.append(String.format(java.util.Locale.US, ":%.2f:%.2f", v.x, v.y));
+                }
+            }
+            return sb.toString();
         }
 
         @Override
         public void execute(Scene scene, boolean isServer, Network net) {
             if (isServer)
-                return; // Server already has this object
+                return;
 
-            // Logic to create object on CLIENT
             RigidBody b;
             if (shapeType.equals("CIRCLE")) {
                 Circle c = new Circle((float) size);
@@ -81,13 +105,18 @@ public abstract class NetworkCommand {
                 c.initialize();
             } else {
                 PolygonShape poly = new PolygonShape();
-                poly.setBox(size / 2.0, size / 2.0);
+                if (vertices != null) {
+                    // Cliente usa os vértices exatos que o servidor mandou
+                    poly.set(vertices, vertices.length);
+                } else {
+                    poly.setBox(size / 2.0, size / 2.0); // Fallback
+                }
                 b = new RigidBody(poly, (int) x, (int) y);
                 poly.initialize();
             }
 
             b.id = id;
-            b.invMass = 0; // Client objects are ghosts (infinite mass)
+            b.invMass = 0;
             scene.bodies.add(b);
         }
     }
@@ -152,41 +181,64 @@ public abstract class NetworkCommand {
         public InputCommand(String[] p) {
             super(Type.INPUT);
             this.shapeType = p[1];
-            this.x = Double.parseDouble(p[2]);
-            this.y = Double.parseDouble(p[3]);
+            this.x = Double.parseDouble(p[2].replace(",", "."));
+            this.y = Double.parseDouble(p[3].replace(",", "."));
         }
 
         @Override
         public String serialize() {
-            return String.format("INPUT:%s:%.2f:%.2f", shapeType, x, y);
+            return String.format(java.util.Locale.US, "INPUT:%s:%.2f:%.2f", shapeType, x, y);
         }
 
         @Override
         public void execute(Scene scene, boolean isServer, Network net) {
-            if (!isServer)
-                return; // Clients don't process inputs from others directly
+            if (!isServer) return; // Só o servidor processa INPUT
 
-            // SERVER LOGIC: Create the real object
             RigidBody b;
-            double size = 1.0; // Default size
+            double size = 1.0;
+            Vector2[] generatedVertices = null;
 
-            // Logic copied from main.createBox/Circle but adapted
             if (shapeType.equals("CIRCLE")) {
                 Circle c = new Circle(0.6f);
                 b = new RigidBody(c, (int) x, (int) y);
                 c.initialize();
+                size = 0.6f;
             } else {
+                // LOGICA DE ALEATORIEDADE (Rodando apenas no Servidor)
                 PolygonShape poly = new PolygonShape();
-                poly.setBox(0.5, 0.5);
+                
+                // Gera vértices aleatórios
+                int count = (int)(Math.random() * 3) + 3; // 3 a 5 vértices
+                generatedVertices = new Vector2[count];
+                
+                for(int i = 0; i < count; i++) {
+                    double angle = Math.random() * Math.PI * 2;
+                    double radius = Math.random() * 0.5 + 0.5;
+                    generatedVertices[i] = new Vector2(
+                        Math.cos(angle) * radius, 
+                        Math.sin(angle) * radius
+                    );
+                }
+                
+                // O método .set calcula o Convex Hull e organiza os vértices
+                poly.set(generatedVertices, count);
+                
+                // Importante: Pegar os vértices FINAIS processados pelo Convex Hull
+                // (O Hull pode reduzir a contagem de vértices se algum ficar dentro)
+                generatedVertices = new Vector2[poly.m_vertexCount];
+                for(int i=0; i<poly.m_vertexCount; i++) {
+                    // Copia para garantir que o cliente receba a forma final limpa
+                    generatedVertices[i] = new Vector2(poly.m_vertices[i].x, poly.m_vertices[i].y);
+                }
+                
                 b = new RigidBody(poly, (int) x, (int) y);
                 poly.initialize();
             }
 
-            // Assign ID and add to Server Scene
             scene.addBodyServer(b);
 
-            // Broadcast SPAWN to all clients so they see it too
-            SpawnCommand spawnCmd = new SpawnCommand(b.id, shapeType, x, y, size);
+            // Broadcast: Manda o ID e também os VÉRTICES gerados
+            SpawnCommand spawnCmd = new SpawnCommand(b.id, shapeType, x, y, size, generatedVertices);
             net.broadcast(spawnCmd);
         }
     }

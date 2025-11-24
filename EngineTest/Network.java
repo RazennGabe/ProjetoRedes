@@ -3,22 +3,29 @@ package EngineTest;
 import java.io.*;
 import java.net.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
-
 import javax.swing.SwingUtilities;
 
 public class Network {
 
+    // --- TCP (Confiável) ---
     private ServerSocket serverSocket;
-    private Socket socket;
+    private Socket tcpSocket;
     private PrintWriter out;
     private BufferedReader in;
-    private Thread listenerThread;
 
-    private ConcurrentLinkedQueue<NetworkCommand> commandBuffer = new ConcurrentLinkedQueue<>();
+    // --- UDP (Rápido) ---
+    private DatagramSocket udpSocket;
+    private InetAddress targetIP; // IP do outro lado
+    private int targetPort; // Porta do outro lado
+
+    private Thread tcpListener;
+    private Thread udpListener;
+
     public boolean isServer = false;
-
-    // Callback para mandar mensagens para o Terminal do Painel
     private ConfigPanel uiCallback;
+
+    // Buffer Compartilhado (TCP e UDP jogam comandos aqui)
+    private ConcurrentLinkedQueue<NetworkCommand> commandBuffer = new ConcurrentLinkedQueue<>();
 
     public Network(ConfigPanel ui) {
         this.uiCallback = ui;
@@ -26,159 +33,227 @@ public class Network {
 
     // --- MODO SERVIDOR ---
     public void startServer(int port) {
-
         isServer = true;
-
         new Thread(() -> {
             try {
-                uiCallback.log(">> [Rede] Iniciando servidor na porta " + port + "...");
+                // 1. Inicia TCP
                 serverSocket = new ServerSocket(port);
+                uiCallback.log(">> [TCP] Aguardando...");
 
-                uiCallback.log(">> [Rede] Aguardando cliente...");
-                socket = serverSocket.accept(); // bloqueia até alguém conectar
+                // TRAVA AQUI ATÉ CONECTAR
+                tcpSocket = serverSocket.accept();
 
-                setupStreams();
-                uiCallback.log(">> [Rede] Cliente conectado: " + socket.getInetAddress());
+                setupTCPStreams();
+                uiCallback.log(">> [TCP] Conectado!");
 
-                // Notify UI connected
-                SwingUtilities.invokeLater(() -> uiCallback.onConnected());
+                // --- CORREÇÃO: Avisa a UI para abrir o jogo ---
+                uiCallback.onConnected();
+                // ---------------------------------------------
 
-                // Inicia loop de escuta
-                startListening();
+                startTCPListening();
+
+                // 2. Inicia UDP
+                udpSocket = new DatagramSocket(port);
+                startUDPListening();
+                uiCallback.log(">> [UDP] Ouvindo na porta " + port);
 
             } catch (IOException e) {
-                uiCallback.log(">> [Erro] Servidor: " + e.getMessage());
-                close();
-                SwingUtilities.invokeLater(() -> uiCallback.onConnectionFailed(e.getMessage()));
+                uiCallback.log("Erro Server: " + e.getMessage());
+                uiCallback.onConnectionFailed(e.getMessage()); // Avisa se falhar
             }
         }).start();
     }
 
     // --- MODO CLIENTE ---
     public void connect(String ip, int port) {
-
         isServer = false;
-
         new Thread(() -> {
             try {
-                uiCallback.log(">> [Rede] Conectando a " + ip + ":" + port + "...");
-                // use explicit Socket and connect with timeout to fail fast
-                socket = new Socket();
-                socket.connect(new InetSocketAddress(ip, port), 3000); // 3s timeout
+                // 1. Conecta TCP
+                tcpSocket = new Socket(ip, port);
+                setupTCPStreams();
+                uiCallback.log(">> [TCP] Conectado!");
 
-                setupStreams();
-                uiCallback.log(">> [Rede] Conectado ao Servidor!");
+                // --- CORREÇÃO: Avisa a UI para abrir o jogo ---
+                uiCallback.onConnected();
+                // ---------------------------------------------
 
-                // Notify UI connected
-                SwingUtilities.invokeLater(() -> uiCallback.onConnected());
+                startTCPListening();
 
-                // Inicia loop de escuta
-                startListening();
+                // 2. Configura UDP
+                targetIP = InetAddress.getByName(ip);
+                targetPort = port;
+                udpSocket = new DatagramSocket();
+                startUDPListening();
+
+                // 3. Handshake UDP
+                sendUDP("UDP_HELLO");
+                uiCallback.log(">> [UDP] Canal aberto.");
 
             } catch (IOException e) {
-                uiCallback.log(">> [Erro] Falha ao conectar: " + e.getMessage());
-                close();
-                SwingUtilities.invokeLater(() -> uiCallback.onConnectionFailed(e.getMessage()));
+                uiCallback.log("Erro Client: " + e.getMessage());
+                uiCallback.onConnectionFailed(e.getMessage()); // Avisa se falhar
             }
         }).start();
     }
 
+    // --- ENVIAR DADOS ---
 
-    public void send(NetworkCommand cmd) {
-        if (out != null) {
+    // TCP: Para SPAWN e INPUT
+    public void sendTCP(NetworkCommand cmd) {
+        if (out != null)
             out.println(cmd.serialize());
+    }
+
+    // UDP: Para SYNC (Novo!)
+    public void sendUDP(NetworkCommand cmd) {
+        if (targetIP != null && udpSocket != null) {
+            sendUDP(cmd.serialize());
         }
     }
 
-    public void broadcast(NetworkCommand cmd) {
-        send(cmd); // For now, 1 client. In future, iterate list of clients.
+    // Helper interno para mandar String via UDP
+    private void sendUDP(String msg) {
+        try {
+            byte[] data = msg.getBytes();
+            DatagramPacket packet = new DatagramPacket(data, data.length, targetIP, targetPort);
+            udpSocket.send(packet);
+        } catch (IOException e) {
+            System.out.println("Erro UDP Send: " + e.getMessage());
+        }
     }
 
-    // Loop que fica ouvindo mensagens chegando
-    private void startListening() {
-        listenerThread = new Thread(() -> {
+    // Broadcast genérico (escolhe o melhor protocolo)
+    public void broadcast(NetworkCommand cmd) {
+        if (cmd.type == NetworkCommand.Type.SYNC) {
+            sendUDP(cmd); // Sync vai rápido!
+        } else {
+            sendTCP(cmd); // O resto vai seguro!
+        }
+    }
+
+    // --- RECEBIMENTO ---
+
+    private void startTCPListening() {
+        tcpListener = new Thread(() -> {
             try {
-                String inputLine;
-                while ((inputLine = in.readLine()) != null) {
-                    try {
-                        if (inputLine.equals("HANDSHAKE_INIT"))
-                            continue;
-                        if (inputLine.equals("PING") || inputLine.equals("PONG"))
-                            continue;
-
-                        NetworkCommand cmd = NetworkCommand.parse(inputLine);
-                        if (cmd != null) {
-                            commandBuffer.add(cmd);
-                        }
-
-                    } catch (Exception ex) {
-                        System.out.println("Parse Error: " + ex.getMessage());
-                    }
-                    final String msg = inputLine;
-                    // Atualiza UI na Thread do Swing
-                    SwingUtilities.invokeLater(() -> {
-
-                        // Exemplo: Se receber "PING", responde "PONG"
-                        if (msg.equals("PING"))
-                            sendMessage("PONG");
-                    });
+                String line;
+                while ((line = in.readLine()) != null) {
+                    processIncomingLine(line);
                 }
-
-                // Remote side closed connection (EOF)
-                SwingUtilities.invokeLater(() -> {
-                    uiCallback.log(">> [Rede] Conexão encerrada pelo par remoto.");
-                    uiCallback.onConnectionClosed();
-                });
-
             } catch (IOException e) {
-                SwingUtilities.invokeLater(() -> {
-                    uiCallback.log(">> [Rede] Conexão encerrada.");
-                    uiCallback.onConnectionClosed();
-                });
+                uiCallback.log("TCP Caiu.");
             }
         });
-        listenerThread.start();
+        tcpListener.start();
     }
 
-    // --- NEW: The Network Step ---
-    // This is called by the Game Loop (main.java)
-    public void processCommands(Scene scene) {
-        while (!commandBuffer.isEmpty()) {
-            NetworkCommand cmd = commandBuffer.poll(); // Remove from queue
-            if (cmd != null) {
-                // Execute logic (Spawn, Sync, etc)
-                cmd.execute(scene, isServer, this);
+    private void startUDPListening() {
+        udpListener = new Thread(() -> {
+            try {
+                byte[] buffer = new byte[1024]; // 1KB buffer
+                while (true) {
+                    DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+                    udpSocket.receive(packet);
+
+                    String line = new String(packet.getData(), 0, packet.getLength());
+
+                    // Lógica para o Servidor descobrir quem é o Cliente UDP
+                    if (isServer) {
+                        targetIP = packet.getAddress();
+                        targetPort = packet.getPort();
+                        if (line.equals("UDP_HELLO")) {
+                            uiCallback.log(">> [UDP] Cliente registrado: " + targetIP + ":" + targetPort);
+                            continue;
+                        }
+                    }
+
+                    processIncomingLine(line);
+                }
+            } catch (IOException e) {
+                uiCallback.log("UDP Erro: " + e.getMessage());
             }
+        });
+        udpListener.start();
+    }
+
+    // Processa texto (vindo de TCP ou UDP) e joga no buffer
+    private void processIncomingLine(String line) {
+        if (line.startsWith("HANDSHAKE") || line.equals("UDP_HELLO"))
+            return;
+
+        try {
+            NetworkCommand cmd = NetworkCommand.parse(line);
+            if (cmd != null) {
+                commandBuffer.add(cmd);
+            }
+        } catch (Exception e) {
+            System.out.println("Parse Erro: " + e.getMessage());
         }
     }
 
-    // ... keep setupStreams and other helpers ...
-    private void setupStreams() throws IOException {
-        out = new PrintWriter(socket.getOutputStream(), true);
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+    // --- SETUP ---
+    public void processCommands(Scene scene) {
+        while (!commandBuffer.isEmpty()) {
+            NetworkCommand cmd = commandBuffer.poll();
+            if (cmd != null)
+                cmd.execute(scene, isServer, this);
+        }
     }
 
-    public void sendMessage(String msg) {
-        if (out != null)
-            out.println(msg);
+    private void setupTCPStreams() throws IOException {
+        out = new PrintWriter(tcpSocket.getOutputStream(), true);
+        in = new BufferedReader(new InputStreamReader(tcpSocket.getInputStream()));
     }
-  
+
     public synchronized void close() {
-        try {
-            if (listenerThread != null && listenerThread.isAlive()) {
-                listenerThread.interrupt();
-            }
-            if (in != null) in.close();
-        } catch (IOException ignored) {}
-        if (out != null) out.close();
-        try {
-            if (socket != null && !socket.isClosed()) socket.close();
-        } catch (IOException ignored) {}
-        try {
-            if (serverSocket != null && !serverSocket.isClosed()) serverSocket.close();
-        } catch (IOException ignored) {}
+        // 1. Parar Threads de Escuta
+        if (tcpListener != null && tcpListener.isAlive()) {
+            tcpListener.interrupt();
+        }
+        if (udpListener != null && udpListener.isAlive()) {
+            udpListener.interrupt();
+        }
 
-        // Notify UI that connection is closed (safe to call on EDT)
-        SwingUtilities.invokeLater(() -> uiCallback.onConnectionClosed());
+        // 2. Fechar Sockets UDP
+        if (udpSocket != null && !udpSocket.isClosed()) {
+            udpSocket.close();
+        }
+
+        // 3. Fechar Streams e Sockets TCP
+        try {
+            if (in != null)
+                in.close();
+        } catch (IOException ignored) {
+        }
+
+        if (out != null)
+            out.close(); // PrintWriter não lança IOException no close
+
+        try {
+            if (tcpSocket != null && !tcpSocket.isClosed())
+                tcpSocket.close();
+        } catch (IOException ignored) {
+        }
+
+        try {
+            if (serverSocket != null && !serverSocket.isClosed())
+                serverSocket.close();
+        } catch (IOException ignored) {
+        }
+
+        // 4. Limpar Estado Interno
+        commandBuffer.clear();
+        isServer = false;
+        targetIP = null;
+        targetPort = 0;
+
+        // 5. Notificar UI (Resetar botões)
+        if (uiCallback != null) {
+            SwingUtilities.invokeLater(() -> {
+                uiCallback.log(">> Conexão finalizada.");
+                uiCallback.onConnectionClosed(); // Precisamos criar esse método no ConfigPanel
+            });
+        }
     }
 }

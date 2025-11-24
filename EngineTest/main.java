@@ -38,25 +38,26 @@ public class main extends JPanel {
                 // Verifica se estamos conectados
                 if (network == null) {
                     // Modo Offline (Teste local)
-                    if (SwingUtilities.isLeftMouseButton(e)) createRandomPoly(scene, worldX, worldY);
-                    else createCircle(scene, worldX, worldY, 0.6);
+                    if (SwingUtilities.isLeftMouseButton(e))
+                        createRandomPoly(scene, worldX, worldY);
+                    else
+                        createCircle(scene, worldX, worldY, 0.6);
                     return;
                 }
 
                 // --- LÓGICA DE REDE ---
-                
+
                 // Define o tipo baseado no botão (Esq = POLY/BOX, Dir = CIRCLE)
                 String type = SwingUtilities.isRightMouseButton(e) ? "CIRCLE" : "POLY";
-                
+
                 // Cria o comando de Input
-                NetworkCommand.InputCommand inputCmd = new NetworkCommand.InputCommand(type, worldX, worldY);
+                NetworkCommand.InputCommand cmd = new NetworkCommand.InputCommand(type, worldX, worldY);
 
                 if (network.isServer) {
-                    // Se sou SERVIDOR: Executo o comando imediatamente (Autoridade)
-                    inputCmd.execute(scene, true, network);
+                    cmd.execute(scene, true, network);
                 } else {
-                    // Se sou CLIENTE: Envio o pedido para o servidor via TCP
-                    network.send(inputCmd);
+                    // Cliente pede via TCP (Seguro, garante que o pedido chegue)
+                    network.sendTCP(cmd);
                 }
             }
         });
@@ -68,16 +69,6 @@ public class main extends JPanel {
         floor.invMass = 0; // Massa infinita (não se move)
         floor.invInertia = 0;
         floor.restitution = 0.2f; // Chão pouco elástico
-
-        /*
-         * // --- Pilha de Caixas ---
-         * for (int y = 0; y < 10; y++) {
-         * createBox(scene, 10.0 + (y * 0.05), 5 + y * 1.2, 1.0, 1.0);
-         * }
-         */
-
-        // --- Uma bola caindo ---
-        createCircle(scene, 8, 10, 0.8);
     }
 
     private RigidBody createRandomPoly(Scene scene, double x, double y) {
