@@ -183,12 +183,17 @@ public class Network {
             return;
 
         try {
+            // ADICIONE ESTA LINHA PARA DEBUG:
+            System.out.println("Recebido: " + line);
+
             NetworkCommand cmd = NetworkCommand.parse(line);
             if (cmd != null) {
                 commandBuffer.add(cmd);
             }
         } catch (Exception e) {
-            System.out.println("Parse Erro: " + e.getMessage());
+            // ALTERE AQUI PARA VER O ERRO NO PAINEL:
+            uiCallback.log("ERRO PARSE: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
