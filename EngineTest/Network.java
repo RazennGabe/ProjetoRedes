@@ -83,7 +83,7 @@ public class Network {
                 // 2. Configura UDP
                 targetIP = InetAddress.getByName(ip);
                 targetPort = port;
-                udpSocket = new DatagramSocket();
+                udpSocket = new DatagramSocket(targetPort);
                 startUDPListening();
 
                 // 3. Handshake UDP
@@ -118,6 +118,9 @@ public class Network {
             byte[] data = msg.getBytes();
             DatagramPacket packet = new DatagramPacket(data, data.length, targetIP, targetPort);
             udpSocket.send(packet);
+
+            System.out.println("Enviado UDP: [" + msg + "] to " + targetIP + ":" + targetPort);
+
         } catch (IOException e) {
             System.out.println("Erro UDP Send: " + e.getMessage());
         }
@@ -152,6 +155,7 @@ public class Network {
         udpListener = new Thread(() -> {
             try {
                 byte[] buffer = new byte[1024]; // 1KB buffer
+
                 while (true) {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     udpSocket.receive(packet);
