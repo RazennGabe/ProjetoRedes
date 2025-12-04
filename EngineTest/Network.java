@@ -83,8 +83,20 @@ public class Network {
                 // 2. Configura UDP
                 targetIP = InetAddress.getByName(ip);
                 targetPort = port;
-                udpSocket = new DatagramSocket(targetPort);
+                udpSocket = new DatagramSocket();
                 startUDPListening();
+
+                // --- CORREÇÃO DO TIMING ---
+                if (!isServer) {
+                    try {
+                        System.out.println("DEBUG: Esperando servidor abrir a porta UDP...");
+                        Thread.sleep(1000); // Espera 1 segundo (1000ms)
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // --------------------------
 
                 // 3. Handshake UDP
                 sendUDP("UDP_HELLO");
@@ -191,7 +203,6 @@ public class Network {
             return;
 
         try {
-            // ADICIONE ESTA LINHA PARA DEBUG:
             System.out.println("Recebido: " + line);
 
             NetworkCommand cmd = NetworkCommand.parse(line);
@@ -199,7 +210,6 @@ public class Network {
                 commandBuffer.add(cmd);
             }
         } catch (Exception e) {
-            // ALTERE AQUI PARA VER O ERRO NO PAINEL:
             uiCallback.log("ERRO PARSE: " + e.getMessage());
             e.printStackTrace();
         }
@@ -265,7 +275,7 @@ public class Network {
         if (uiCallback != null) {
             SwingUtilities.invokeLater(() -> {
                 uiCallback.log(">> Conexão finalizada.");
-                uiCallback.onConnectionClosed(); // Precisamos criar esse método no ConfigPanel
+                uiCallback.onConnectionClosed();
             });
         }
     }
