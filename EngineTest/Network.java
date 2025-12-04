@@ -160,6 +160,10 @@ public class Network {
 
                     // Lógica para o Servidor descobrir quem é o Cliente UDP
                     if (isServer) {
+
+                        System.out.println("DEBUG SERVER RECEBEU UDP: [" + line + "] de " + packet.getAddress());
+                        uiCallback.log("DEBUG SERVER RECEBEU UDP: [" + line + "] de " + packet.getAddress());
+
                         targetIP = packet.getAddress();
                         targetPort = packet.getPort();
                         if (line.equals("UDP_HELLO")) {

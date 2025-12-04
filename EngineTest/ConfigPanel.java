@@ -142,13 +142,14 @@ public class ConfigPanel extends JPanel {
                 pingLabel.setForeground(Color.ORANGE);
             } else {
                 // Conectar Client
-                String ip = ipField.getText();
+                String ip = ipField.getText().trim();
                 network.connect(ip, port);
                 pingLabel.setText("Status: Tentando Conectar...");
                 pingLabel.setForeground(Color.ORANGE);
             }
 
-            // invokeInitSimulation() moved to onConnected() so simulation only starts after success
+            // invokeInitSimulation() moved to onConnected() so simulation only starts after
+            // success
         });
 
         stopButton.addActionListener(e -> {
